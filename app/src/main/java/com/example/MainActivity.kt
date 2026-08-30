@@ -20,6 +20,18 @@ class MainActivity : ComponentActivity() {
     companion object {
         @Volatile
         var pendingTileAction: String? = null
+
+        /** Atomic consume-and-clear: only one reader ever gets each action. */
+        fun takePendingTileAction(): String? {
+            val action = pendingTileAction
+            pendingTileAction = null
+            return action
+        }
+
+        /** Idempotent publish: latest action wins. */
+        fun publishPendingTileAction(action: String) {
+            pendingTileAction = action
+        }
     }
 
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -60,7 +72,7 @@ class MainActivity : ComponentActivity() {
     private fun handleTileIntent(intent: android.content.Intent?) {
         val action = intent?.getStringExtra("tile_action")
         if (!action.isNullOrBlank()) {
-            pendingTileAction = action
+            publishPendingTileAction(action)
         }
     }
 }

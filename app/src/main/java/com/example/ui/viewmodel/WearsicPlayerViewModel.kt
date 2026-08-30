@@ -1,8 +1,6 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
-import android.content.Context
-import android.net.ConnectivityManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.WearsicApp
@@ -12,8 +10,8 @@ import com.example.data.WearsicPreferencesRepository
 import com.example.data.WearsicRecentRepository
 import com.example.data.db.WearsicDownloadEntity
 import com.example.media.WearsicPlaybackController
+import com.example.media.AutoCacheController
 import com.example.media.cache.WearsicPlaybackCacheManager
-import androidx.core.net.toUri
 import com.example.media.download.WearsicDownloadManager
 import com.example.model.PlaybackUiState
 import com.example.model.Playlist
@@ -31,8 +29,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.Request
-import java.util.concurrent.TimeUnit
+
 
 data class SearchUiState(
     val query: String = "",
@@ -102,6 +99,18 @@ class WearsicPlayerViewModel(application: Application) : AndroidViewModel(applic
     private val preferencesRepository = WearsicPreferencesRepository(application.applicationContext)
     private val downloadManager = WearsicDownloadManager(application.applicationContext, downloadRepository)
     private val playbackController = WearsicPlaybackController(application.applicationContext)
+    // Deferred with lazy: references `downloads` / `autoCacheEnabled`, which
+    // are declared later in the class; first access happens in init{}.
+    private val autoCache: AutoCacheController by lazy {
+        AutoCacheController(
+            application.applicationContext,
+            viewModelScope,
+            downloadManager,
+            downloads,
+            autoCacheEnabled,
+            recentRepository
+        )
+    }
 
     val uiState: StateFlow<PlaybackUiState> = playbackController.uiState
 
@@ -126,40 +135,11 @@ class WearsicPlayerViewModel(application: Application) : AndroidViewModel(applic
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
 
     /**
-     * SLEEP TIMER: pauses playback after [minutes], fading volume to zero over
-     * the final 10 seconds. minutes <= 0 cancels an active timer.
+     * SLEEP TIMER: delegates to [SleepTimerController]; pauses playback after
+     * [minutes], fading volume to zero over the final 10 seconds.
      */
     fun setSleepTimer(minutes: Int) {
-        sleepJob?.cancel()
-        playbackController.setVolumeScale(1f)
-        if (minutes <= 0) {
-            _sleepRemainingMs.value = 0L
-            return
-        }
-        val durationMs = minutes * 60_000L
-        val endsAt = System.currentTimeMillis() + durationMs
-        sleepJob = viewModelScope.launch {
-            var lastTick = System.nanoTime()
-            while (true) {
-                delay(250)
-                val now = System.currentTimeMillis()
-                val remaining = endsAt - now
-                _sleepRemainingMs.value = remaining.coerceAtLeast(0L)
-                if (remaining <= 10_000L) {
-                    // Fade over the final 10 seconds.
-                    val nowNano = System.nanoTime()
-                    val dtSec = ((nowNano - lastTick) / 1_000_000_000f).coerceIn(0.05f, 0.5f)
-                    lastTick = nowNano
-                    val step = dtSec / 10f
-                    val currentVol = 1f - ((10_000f - remaining.toFloat()) / 10_000f)
-                    playbackController.setVolumeScale((currentVol - step).coerceIn(0f, 1f))
-                }
-                if (remaining <= 0L) break
-            }
-            playbackController.pause()
-            playbackController.setVolumeScale(1f)
-            _sleepRemainingMs.value = 0L
-        }
+        sleepTimer.set(minutes)
     }
 
     fun setApiKey(key: String) {
@@ -205,9 +185,12 @@ class WearsicPlayerViewModel(application: Application) : AndroidViewModel(applic
     private val _radioState = MutableStateFlow<RadioState>(RadioState.Idle)
     val radioState: StateFlow<RadioState> = _radioState.asStateFlow()
 
-    private val _sleepRemainingMs = MutableStateFlow(0L)
-    val sleepRemainingMs: StateFlow<Long> = _sleepRemainingMs.asStateFlow()
-    private var sleepJob: Job? = null
+    private val sleepTimer = SleepTimerController(
+        viewModelScope,
+        setVolume = playbackController::setVolumeScale,
+        pause = playbackController::pause
+    )
+    val sleepRemainingMs: StateFlow<Long> = sleepTimer.remainingMs
 
     private val _albumsState = MutableStateFlow(AlbumsUiState())
     val albumsState: StateFlow<AlbumsUiState> = _albumsState.asStateFlow()
@@ -220,15 +203,6 @@ class WearsicPlayerViewModel(application: Application) : AndroidViewModel(applic
 
     @Volatile
     private var hiddenPlaylistIds: Set<String> = emptySet()
-
-    // Lightweight client used only to pre-warm the server's stream cache for
-    // the NEXT track in the queue, so it starts playing instantly.
-    private val warmUpClient = com.example.network.WearsicHttp.client.newBuilder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .build()
-    @Volatile
-    private var lastWarmUpTrackId: String? = null
 
     init {
         // Sync the optional API key into the HTTP client for every request.
@@ -255,98 +229,14 @@ class WearsicPlayerViewModel(application: Application) : AndroidViewModel(applic
         // limit here used to release/rebuild the SimpleCache while the player
         // was active, which caused IO errors on slow watches.
 
-        // GUARANTEED offline layer: every streamed song that starts playing is
-        // immediately saved as a real download (subject to the Auto-Cache
-        // toggle, network availability and the 15-song auto-cache cap). This
-        // replaces reliance on ExoPlayer's opaque stream cache — play a song
-        // once online and it plays forever offline. The NEXT queued track is
-        // also pre-warmed on the server to kill extraction delay.
-        viewModelScope.launch {
-            val autoCachedTrackIds = mutableSetOf<String>()
-            var lastTrack: Track? = null
-
-            playbackController.uiState.collect { state ->
-                val track = state.currentTrack
-                if (track.id.isNotBlank()) {
-                    if (track.id != lastTrack?.id) {
-                        // Track changed: save the previous one if mid-play.
-                        lastTrack?.let { previous ->
-                            maybeAutoCacheTrack(previous, autoCachedTrackIds)
-                        }
-                        lastTrack = track
-                        recentRepository.recordPlayed(track)
-                    }
-
-                    // Save the CURRENT track too so even the first song of a
-                    // session is protected.
-                    maybeAutoCacheTrack(track, autoCachedTrackIds)
-
-                    // Pre-warm the server for the upcoming song (1-byte request:
-                    // the server resolves + caches the real stream URL so the
-                    // next play() skips the multi-second extraction).
-                    val nextTrack = state.playlist.getOrNull(state.currentTrackIndex + 1)
-                    if (nextTrack != null && nextTrack.id != lastWarmUpTrackId) {
-                        warmUpStream(nextTrack)
-                    }
-                }
-            }
-        }
-    }
-
-    private fun warmUpStream(nextTrack: Track) {
-        if (!nextTrack.mediaUri.startsWith("http")) return
-        if (!isNetworkAvailable()) {
-            lastWarmUpTrackId = nextTrack.id
-            return
-        }
-        lastWarmUpTrackId = nextTrack.id
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val request = Request.Builder()
-                    .url(nextTrack.mediaUri)
-                    .header("Range", "bytes=0-0")
-                    .build()
-                warmUpClient.newCall(request).execute().use { response ->
-                    response.body?.close()
-                }
-            } catch (_: Exception) {
-                // Warm-up is best-effort; playback retries normally anyway.
-            }
-        }
+        // GUARANTEED offline layer + next-track server warm-up (see
+        // [AutoCacheController]).
+        autoCache.attach(playbackController.uiState)
     }
 
     fun setAutoCacheEnabled(enabled: Boolean) {
         viewModelScope.launch {
             preferencesRepository.setAutoCacheEnabled(enabled)
-        }
-    }
-
-    private fun maybeAutoCacheTrack(
-        track: Track,
-        evaluatedTrackIds: MutableSet<String>
-    ) {
-        if (track.id in evaluatedTrackIds) return
-        if (!autoCacheEnabled.value) return
-        // Only streamed tracks can be auto-cached; local files are already offline.
-        if (!track.mediaUri.startsWith("http")) return
-        if (!isNetworkAvailable()) return
-
-        if (downloadManager.isDownloading(track.id)) return
-        if (downloads.value.any { it.trackId == track.id && it.isCompleted() }) return
-
-        evaluatedTrackIds.add(track.id)
-        downloadManager.startDownload(track, autoCached = true)
-    }
-
-    private fun isNetworkAvailable(): Boolean {
-        return try {
-            val connectivityManager = getApplication<Application>()
-                .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            val network = connectivityManager.activeNetwork ?: return false
-            val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-            capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
-        } catch (_: Exception) {
-            true
         }
     }
 

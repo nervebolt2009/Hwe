@@ -94,8 +94,7 @@ fun WearsicApp(
     // Execute actions requested from the system Tile (opens app briefly).
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(1500)
-        MainActivity.pendingTileAction?.let { action ->
-            MainActivity.pendingTileAction = null
+        MainActivity.takePendingTileAction()?.let { action ->
             playerViewModel.handleTileAction(action)
         }
     }

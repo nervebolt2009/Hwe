@@ -34,12 +34,7 @@ class WearsicMediaService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
 
-        // Notification channel for playback + Ongoing Activity ring.
-        getSystemService(NOTIFICATION_SERVICE).let {
-            (it as NotificationManager).createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Playback", NotificationManager.IMPORTANCE_LOW)
-            )
-        }
+        ensureNotificationChannel()
 
         // 1. Audio attributes for battery-conscious music playback
         val audioAttributes = AudioAttributes.Builder()

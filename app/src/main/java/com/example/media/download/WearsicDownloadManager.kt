@@ -141,7 +141,10 @@ class WearsicDownloadManager(
      */
     private suspend fun downloadWithResume(track: Track, partFile: File) {
         var downloaded = if (partFile.exists()) partFile.length() else 0L
+        // No reliable total until the server tells us: fall back to a rough
+        // bitrate heuristic (durationMs * 16 kbps), then refine from headers.
         var totalLength = (track.durationMs * 16).coerceAtLeast(1L)
+        var totalIsKnown = false
         var consecutiveFailures = 0
 
         while (coroutineContext.isActive) {
@@ -162,7 +165,19 @@ class WearsicDownloadManager(
                 // Total length from Content-Range: "bytes a-b/total"
                 response.header("Content-Range")?.let { contentRange ->
                     contentRange.substringAfter('/').trim().toLongOrNull()?.let { total ->
-                        if (total > 0) totalLength = total
+                        if (total > 0) {
+                            totalLength = total
+                            totalIsKnown = true
+                        }
+                    }
+                }
+                // Full 200 responses (no range) carry Content-Length directly.
+                if (!totalIsKnown) {
+                    response.header("Content-Length")?.toLongOrNull()?.let { len ->
+                        if (len > 0) {
+                            totalLength = len + downloaded
+                            totalIsKnown = true
+                        }
                     }
                 }
 

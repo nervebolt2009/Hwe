@@ -32,6 +32,7 @@ class WearsicPlaybackController(private val context: Context) {
     private var mediaController: MediaController? = null
     private var positionUpdateJob: Job? = null
     private var pendingPlay: Pair<List<Track>, Int>? = null
+    private var originalQueue: List<Track>? = null
     private var reconnectAttempts = 0
     private var playbackRetryAttempts = 0
     private var lastPreviousTapTimeMs = 0L
@@ -280,6 +281,7 @@ class WearsicPlaybackController(private val context: Context) {
         controller.repeatMode = Player.REPEAT_MODE_OFF
         controller.prepare()
         controller.play()
+        originalQueue = tracks
         val currentTrack = tracks.getOrNull(startIndex) ?: tracks.first()
         _uiState.update { current ->
             current.copy(
@@ -457,11 +459,14 @@ class WearsicPlaybackController(private val context: Context) {
         val wasPlaying = controller.isPlaying
 
         val newList = if (enabled) {
+            // Remember the pre-shuffle order so toggling off can restore it.
+            if (current.playlist != originalQueue) originalQueue = current.playlist
             listOf(currentItem) + current.playlist.filterIndexed { i, _ -> i != idx }.shuffled()
         } else {
-            // Restore server/queue order as remembered by ids? Simplest stable:
-            // keep current first then the rest in insertion order we still track.
-            listOf(currentItem) + current.playlist.filterIndexed { i, _ -> i != idx }
+            // Restore the original order, keeping the current track in place.
+            val base = originalQueue ?: current.playlist
+            val rest = base.filter { it.id != currentItem.id }
+            listOf(currentItem) + rest
         }
 
         val items = WearsicMediaItemFactory.buildMediaItems(newList)

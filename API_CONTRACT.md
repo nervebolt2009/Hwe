@@ -134,13 +134,17 @@ Used in search results, favorites, playlists bodies:
 
 | Field | Type | Required | Notes |
 | :--- | :--- | :--- | :--- |
-| `videoId` | String | Yes | Unique id; also used to build stream URL client-side. |
+| `id` | String | Yes | Unique id; also used to build stream URL client-side. |
 | `title` | String | Yes | |
-| `uploader` | String | Yes | Displayed as artist. |
+| `artist` | String | Yes | Displayed as artist. |
+| `album` | String | No | Optional; client defaults to "Single" when absent. |
+| `artworkUrl` | String | No | Small thumbnail OK; client upgrades resolution. |
 | `durationMs` | Long | No | Milliseconds; `0` if unknown. |
-| `thumbnailUrl` | String | No | Small thumbnail OK; client upgrades resolution. |
+| `streamUrl` | String | Yes | The client derives the stream URL itself as `{server}/api/stream/{id}`. |
 
-The client POSTs exactly these five fields as JSON.
+The client POSTs these fields as JSON; servers may ignore `streamUrl` on
+ingest and tolerate extra fields, since the client parses responses
+defensively.
 
 ## Compatibility Rules
 

@@ -61,7 +61,9 @@ signingConfigs {
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
   dependenciesInfo {
-    includeInApk = false
+    // Keep the dependency info block consistent across artifacts so the
+    // Play Store / sideloaded APK reports match.
+    includeInApk = true
     includeInBundle = true
   }
 }
