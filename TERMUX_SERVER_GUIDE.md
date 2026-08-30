@@ -1,292 +1,282 @@
-# Wearsic Server — Termux Setup Guide
+# Wearsic Server Termux Guide
 
-Run the Wearsic backend on an Android phone with Termux and connect a Wear OS
-watch over the same Wi-Fi network, Tailscale, or a private HTTPS tunnel.
+This guide covers both server editions:
+
+- **V1 (`wearsic-server/`)** — the original compiled Ktor server containing the NewPipe Extractor.
+- **V2 (`wearsic-server-v2/`)** — a source-based FastAPI gateway that keeps V1 as the primary provider and uses yt-dlp as a backup.
+
+For failover, run both services on the phone and configure the watch to use **V2 only**.
+
+```text
+Wear OS app
+    │ HTTP + X-Wearsic-Key
+    ▼
+V2 gateway :8081
+    ├── normal requests → V1/NewPipe :8080
+    └── repeated primary failures → yt-dlp backup
+```
+
+The app never switches ports. V2 performs the provider switch internally. Existing streams cannot be migrated mid-playback; a new request or retry is routed using the current provider.
 
 ## 1. Install Termux
 
-Install Termux from F-Droid, not the outdated Play Store build:
+Install Termux from F-Droid. Avoid the obsolete Play Store build:
 
 <https://f-droid.org/en/packages/com.termux/>
 
-Then update packages:
+Then install the required tools:
 
 ```bash
 pkg update -y && pkg upgrade -y
-pkg install -y openjdk-17 curl unzip
-java -version
-```
-
-Java 17 or newer is required.
-
-## 2. Install the server package
-
-Download `wearsic-server-termux-FIXED.zip` from the GitHub release, then either
-copy it to Termux's home directory or copy it from Android shared storage:
-
-```bash
+pkg install -y git python curl unzip ffmpeg
 termux-setup-storage
-cp ~/storage/downloads/wearsic-server-termux-FIXED.zip ~/
+python --version
 ```
 
-Extract it:
+Python 3.11 or newer is recommended. Keep Termux battery usage set to **Unrestricted** in Android settings.
+
+## 2. Download V2
+
+Download the `wearsic-server-v2.zip` asset from the repository's Releases page, or clone the repository:
 
 ```bash
 cd ~
-unzip -o wearsic-server-termux-FIXED.zip
+git clone https://github.com/nervebolt2009/Hwe.git wearsic-source
+cp ~/storage/downloads/wearsic-server-v2.zip ~/
+unzip -o ~/wearsic-server-v2.zip -d ~/
+```
+
+If cloning instead of using the release archive:
+
+```bash
+cp -r ~/wearsic-source/wearsic-server-v2 ~/wearsic-server-v2
+```
+
+The V2 directory must contain `app/`, `requirements.txt`, `.env.example`, `run-termux.sh`, and `README.md`.
+
+## 3. Install the original NewPipe server (V1)
+
+Download `wearsic-server-termux-FIXED.zip` from the same release and extract it:
+
+```bash
+unzip -o ~/wearsic-server-termux-FIXED.zip -d ~/
 cd ~/wearsic-server
 chmod +x run-termux.sh bin/wearsic-server
 ```
 
-The extracted directory must contain:
+V1 runs on port `8080` by default and contains the NewPipe Extractor. V2 cannot replace this component; it calls V1 over localhost.
 
-```text
-~/wearsic-server/run-termux.sh
-~/wearsic-server/bin/wearsic-server
-~/wearsic-server/lib/
+## 4. Configure both servers
+
+Create a shared API key. A random key can be generated with:
+
+```bash
+python -c 'import secrets; print(secrets.token_urlsafe(32))'
 ```
 
-## 3. Configure the server
-
-The defaults are:
-
-- Port: `8080`
-- Database: `~/wearsic-server/wearsic.db`
-- API key: disabled
-
-For a private server, create or edit `.env` without duplicating entries:
+Configure V1:
 
 ```bash
 cd ~/wearsic-server
 touch .env
 sed -i '/^WEARSIC_API_KEY=/d' .env
-printf '%s\n' 'WEARSIC_API_KEY=replace-with-a-long-random-secret' >> .env
+printf '%s\n' 'PORT=8080' >> .env
+printf '%s\n' 'WEARSIC_API_KEY=PASTE_THE_SAME_KEY_HERE' >> .env
 chmod 600 .env
 ```
 
-Optional settings:
+Configure V2:
 
 ```bash
-printf '%s\n' 'PORT=8080' >> .env
-printf '%s\n' 'WEARSIC_DB_PATH=/data/data/com.termux/files/home/wearsic-server/wearsic.db' >> .env
+cd ~/wearsic-server-v2
+cp .env.example .env
+sed -i 's|^WEARSIC_API_KEY=.*|WEARSIC_API_KEY=PASTE_THE_SAME_KEY_HERE|' .env
+sed -i 's|^WEARSIC_PRIMARY_URL=.*|WEARSIC_PRIMARY_URL=http://127.0.0.1:8080|' .env
+chmod 600 .env
 ```
 
-Do not share `.env`; it contains the API key.
+V2's important defaults are:
 
-## 4. Start the auto-healing server
+```text
+V1/NewPipe primary: 127.0.0.1:8080
+V2 gateway:         0.0.0.0:8081
+Failure threshold:  3 consecutive failures
+Recovery threshold: 3 successful primary probes
+yt-dlp concurrency: 2 processes maximum
+```
 
-Run this in a Termux session and leave the session alive:
+Never commit or share either `.env` file.
+
+## 5. Start the services
+
+Start V1 first in one Termux session:
 
 ```bash
 cd ~/wearsic-server
 ./run-termux.sh
 ```
 
-The supervisor now:
-
-- acquires a Termux wake lock when available;
-- starts the server;
-- checks `http://127.0.0.1:8080/health` every 30 seconds;
-- retries failed health checks three times;
-- restarts the server after a crash or approximately 45 seconds of failure;
-- applies a bounded restart backoff;
-- rotates `wearsic-server.log` at approximately 2 MB;
-- writes its PID to `wearsic-server.pid`;
-- shuts down the child server cleanly on `Ctrl+C`.
-
-Expected output includes:
-
-```text
-[wearsic HH:MM:SS] wake lock acquired
-[wearsic HH:MM:SS] auto-heal supervisor starting (health checks every 30s)
-[wearsic HH:MM:SS] starting server on port 8080
-[wearsic HH:MM:SS] server started (pid XXXX)
-```
-
-The supervisor is intentionally foreground-based. Do not run multiple copies.
-If one is already running, the script refuses to start a second supervisor.
-
-## 5. Verify locally
-
-Open a second Termux session:
+Verify it:
 
 ```bash
 curl --fail --max-time 10 http://127.0.0.1:8080/health
 ```
 
-Expected response:
-
-```json
-{"status":"ok","version":"1.0.0","serverName":"Wearsic Engine"}
-```
-
-Test search:
+Start V2 in another Termux session:
 
 ```bash
-curl --fail --max-time 30 'http://127.0.0.1:8080/api/search?q=crowded%20house'
+cd ~/wearsic-server-v2
+chmod +x run-termux.sh
+./run-termux.sh
 ```
 
-If an API key is configured, include it:
+The V2 launcher creates `.venv`, installs pinned Python dependencies, starts uvicorn, checks `/health`, and restarts the process after crashes. Set `WEARSIC_SKIP_INSTALL=1` in `.env` after the first successful installation to avoid checking packages on every restart.
+
+## 6. Verify V2 and failover
+
+Check V2 health:
+
+```bash
+curl --fail http://127.0.0.1:8081/health
+```
+
+Expected normal state:
+
+```json
+{"status":"ok","version":"2.0.0","serverName":"Wearsic Engine V2","engine":"primary","healing":false}
+```
+
+Test an authenticated search:
 
 ```bash
 curl --fail --max-time 30 \
-  -H 'X-Wearsic-Key: replace-with-a-long-random-secret' \
-  'http://127.0.0.1:8080/api/search?q=crowded%20house'
+  -H 'X-Wearsic-Key: PASTE_THE_SAME_KEY_HERE' \
+  --get --data-urlencode 'q=crowded house' \
+  http://127.0.0.1:8081/api/search
 ```
 
-## 6. Connect the watch
+When V1 fails three consecutive provider requests, V2 reports `engine: "ytdlp"` and routes new extraction requests through yt-dlp. V2 probes V1 before failing back; it requires the configured recovery threshold, preventing rapid flapping.
 
-### Same Wi-Fi
+The backup requires yt-dlp to be installed and available. The Python requirements install the `yt-dlp` package into V2's virtual environment. Test it directly if needed:
 
-Find the phone's Wi-Fi address:
+```bash
+~/wearsic-server-v2/.venv/bin/yt-dlp --version
+```
+
+## 7. Configure the watch
+
+Set the server URL in the Android app to **V2's port 8081**.
+
+For same Wi-Fi, find the phone address:
 
 ```bash
 ip -4 addr show wlan0
 ```
 
-Use the `inet` address, for example `192.168.1.42`, then set this in Wearsic:
+Use the `inet` address, for example:
 
 ```text
-http://192.168.1.42:8080
+http://192.168.1.42:8081
 ```
 
-Both devices must be on the same network, and the network must allow device-to-
-device traffic.
-
-### Tailscale
-
-Install Tailscale on both devices, then find the phone's Tailscale address:
+The watch and phone must be on the same network. For Tailscale, use the phone's `tun0` address and still use port `8081`:
 
 ```bash
 ip -4 addr show tun0
+# http://100.x.y.z:8081
 ```
 
-Set the watch server URL to:
+Configure the same API key in the app. Do not expose port 8080 publicly; only V2 should be reachable from the watch.
 
-```text
-http://100.x.y.z:8080
-```
+## 8. Automatic startup after reboot
 
-Use an API key even on Tailscale.
-
-### Public HTTPS tunnel
-
-Use a private HTTPS tunnel pointing to `http://127.0.0.1:8080`. Set the watch
-URL to the HTTPS hostname and always configure `WEARSIC_API_KEY`.
-
-Do not expose an open Wearsic server to the public internet.
-
-## 7. Useful commands
-
-```bash
-# Start / auto-heal
-cd ~/wearsic-server && ./run-termux.sh
-
-# Health check
-curl --fail http://127.0.0.1:8080/health
-
-# Follow logs
-tail -f ~/wearsic-server/wearsic-server.log
-
-# Check supervisor PID
-cat ~/wearsic-server/wearsic-server.pid
-
-# Stop cleanly
-# Press Ctrl+C in the supervisor's Termux session
-```
-
-If the supervisor session was lost and you need to stop it, use the recorded
-PID rather than a broad process-name kill:
-
-```bash
-kill "$(cat ~/wearsic-server/wearsic-server.pid)"
-```
-
-## 8. Data and backup
-
-Important files:
-
-- `wearsic.db` — favorites and playlists;
-- `.env` — API key and server settings;
-- `wearsic-server.log` — supervisor and server logs.
-
-Back up the database and keep `.env` private:
-
-```bash
-cp ~/wearsic-server/wearsic.db ~/wearsic-server/wearsic.db.backup
-cp ~/wearsic-server/.env ~/wearsic-server/.env.backup
-chmod 600 ~/wearsic-server/.env.backup
-```
-
-## 9. Keep Termux alive
-
-For long-running use:
-
-1. Run `termux-wake-lock` if the supervisor did not acquire it automatically.
-2. Set Termux battery usage to **Unrestricted** in Android settings.
-3. Do not swipe the supervisor Termux session away.
-4. For reboot-start support, install Termux:Boot from F-Droid and create:
+Install Termux:Boot from F-Droid. Then:
 
 ```bash
 mkdir -p ~/.termux/boot
 cat > ~/.termux/boot/start-wearsic.sh <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 termux-wake-lock
-exec "$HOME/wearsic-server/run-termux.sh"
+cd "$HOME/wearsic-server"
+./run-termux.sh >> "$HOME/wearsic-v1-boot.log" 2>&1 &
+sleep 5
+cd "$HOME/wearsic-server-v2"
+exec ./run-termux.sh >> "$HOME/wearsic-v2-boot.log" 2>&1
 EOF
 chmod +x ~/.termux/boot/start-wearsic.sh
 ```
 
+V1 is started first, then V2 after a short delay. Both launchers are foreground supervisors; the boot script backgrounds V1 and keeps V2 attached to the boot job.
+
+## 9. Logs, data, and backups
+
+V1:
+
+```bash
+tail -f ~/wearsic-server/wearsic-server.log
+```
+
+V2:
+
+```bash
+tail -f ~/wearsic-server-v2/server.log
+```
+
+V2 data is stored in `wearsic-server-v2.db` unless `WEARSIC_DB_PATH` is changed. Back up the database and secrets:
+
+```bash
+cp ~/wearsic-server-v2/wearsic-server-v2.db ~/wearsic-server-v2/wearsic-server-v2.db.backup
+cp ~/wearsic-server-v2/.env ~/wearsic-server-v2/.env.backup
+chmod 600 ~/wearsic-server-v2/.env.backup
+```
+
 ## 10. Troubleshooting
 
-### Missing binary
+### V2 says primary is unavailable
+
+Check V1 first:
 
 ```bash
-cd ~/wearsic-server
-ls -l bin/wearsic-server lib/
-chmod +x bin/wearsic-server run-termux.sh
+curl -v http://127.0.0.1:8080/health
+ps -ef | grep -E 'wearsic|uvicorn' | grep -v grep
 ```
 
-If `bin/` or `lib/` is missing, extract the complete release ZIP again.
+### V2 backup does not work
 
-### Port already in use
-
-Check the process using the port:
+Check yt-dlp and network access:
 
 ```bash
-curl http://127.0.0.1:8080/health
-cat ~/wearsic-server/wearsic-server.pid 2>/dev/null || true
+~/wearsic-server-v2/.venv/bin/yt-dlp --version
+~/wearsic-server-v2/.venv/bin/yt-dlp --no-playlist --get-title 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
 ```
 
-Stop the existing supervisor using its PID, then start one copy only.
+### HTTP 401
 
-### HTTP 401 or 403
-
-Confirm the same key is present in `.env` and Wearsic Settings. The header is:
+The app, V1, and V2 must use the exact same `WEARSIC_API_KEY`. The header name is:
 
 ```text
 X-Wearsic-Key
 ```
 
-### Search or stream extraction fails
+### Repeated restarts
 
-Inspect the log:
-
-```bash
-tail -100 ~/wearsic-server/wearsic-server.log
-```
-
-YouTube may require a cookie. The server README documents the optional
-`WEARSIC_YOUTUBE_COOKIE` environment variable and cookie configuration route.
-
-### Server restarts repeatedly
-
-Check Java, storage, and logs:
+Inspect both logs, check storage, and check ports:
 
 ```bash
-java -version
 df -h ~
 tail -200 ~/wearsic-server/wearsic-server.log
+tail -200 ~/wearsic-server-v2/server.log
 ```
 
-The server needs free storage for SQLite and stream handling.
+### Port conflict
+
+```bash
+curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8081/health
+```
+
+Run only one supervisor for each port.
+
+## Reliability notes
+
+V2 provides request-level failover, bounded yt-dlp concurrency, timeouts, caching, hysteresis, and process restart supervision. It cannot guarantee YouTube availability, migrate an already-open stream, or prove that a provider's returned media URL will remain valid after resolution. Test the complete setup on the target phone before depending on it.
