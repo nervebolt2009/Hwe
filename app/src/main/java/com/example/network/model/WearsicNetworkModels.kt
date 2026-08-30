@@ -15,23 +15,38 @@ data class ServerHealthDto(
 
 @Serializable
 data class TrackDto(
-    val id: String,
-    val title: String,
-    val artist: String,
+    @SerialName("id") val id: String = "",
+    val title: String = "",
+    @SerialName("artist") val artist: String = "Unknown Artist",
     val album: String? = null,
     @SerialName("artworkUrl") val artworkUrl: String? = null,
     val durationMs: Long = 0L,
-    val streamUrl: String
+    val streamUrl: String = "",
+    @SerialName("videoId") val legacyVideoId: String? = null,
+    @SerialName("uploader") val legacyUploader: String? = null,
+    @SerialName("thumbnailUrl") val legacyThumbnailUrl: String? = null
 ) {
+    private val normalizedId: String
+        get() = id.ifBlank { legacyVideoId.orEmpty() }
+
+    private val normalizedArtist: String
+        get() = artist.takeIf { it.isNotBlank() && it != "Unknown Artist" }
+            ?: legacyUploader.orEmpty().ifBlank { "Unknown Artist" }
+
+    private val normalizedArtworkUrl: String?
+        get() = artworkUrl ?: legacyThumbnailUrl
+
+    private val normalizedStreamUrl: String
+        get() = streamUrl.ifBlank { "/api/stream/$normalizedId" }
     fun toDomainTrack(): Track {
         return Track(
-            id = id,
+            id = normalizedId,
             title = title,
-            artist = artist,
+            artist = normalizedArtist,
             album = album ?: "Single",
-            artworkUrl = artworkUrl?.toHighResArtwork(),
+            artworkUrl = normalizedArtworkUrl?.toHighResArtwork(),
             durationMs = durationMs,
-            mediaUri = streamUrl,
+            mediaUri = normalizedStreamUrl,
             isFavorite = false
         )
     }
@@ -50,7 +65,12 @@ data class TrackDto(
     }
 
     fun toRequestBodyJson(): String {
-        return kotlinx.serialization.json.Json.encodeToString(serializer(), this)
+        return kotlinx.serialization.json.Json.encodeToString(serializer(), this.copy(
+            id = normalizedId,
+            artist = normalizedArtist,
+            artworkUrl = normalizedArtworkUrl,
+            streamUrl = normalizedStreamUrl
+        ))
     }
 }
 
