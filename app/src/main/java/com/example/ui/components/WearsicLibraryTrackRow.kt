@@ -74,7 +74,7 @@ fun WearsicLibraryTrackRow(
             // combinedClickable wires the declared onLongPress (action sheet)
             // so callers relying on long-press actually get it.
             .combinedClickable(onClick = onPlay, onLongClick = onLongPress)
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .padding(horizontal = 12.dp, vertical = 9.dp)
             .testTag("${testTagPrefix}_${track.id}")
     ) {
         Row(
@@ -117,14 +117,18 @@ fun WearsicLibraryTrackRow(
 
                 Spacer(modifier = Modifier.width(10.dp))
 
-                Column {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp)
+                ) {
                     Text(
                         text = track.title,
                         color = WearsicTextPrimary,
                         fontSize = 12.sp,
-                        lineHeight = 16.sp,
+                        lineHeight = 15.sp,
                         fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                     Spacer(modifier = Modifier.height(1.dp))
@@ -132,7 +136,7 @@ fun WearsicLibraryTrackRow(
                         text = track.artist,
                         color = WearsicTextSecondary,
                         fontSize = 10.sp,
-                        lineHeight = 14.sp,
+                        lineHeight = 13.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
