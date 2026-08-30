@@ -74,7 +74,7 @@ fun WearsicLibraryTrackRow(
             // combinedClickable wires the declared onLongPress (action sheet)
             // so callers relying on long-press actually get it.
             .combinedClickable(onClick = onPlay, onLongClick = onLongPress)
-            .padding(horizontal = 12.dp, vertical = 9.dp)
+            .padding(horizontal = 12.dp, vertical = 11.dp)
             .testTag("${testTagPrefix}_${track.id}")
     ) {
         Row(
@@ -95,13 +95,13 @@ fun WearsicLibraryTrackRow(
                         contentDescription = track.title,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(34.dp)
                             .clip(CircleShape)
                     )
                 } else {
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(34.dp)
                             .clip(CircleShape)
                             .background(WearsicLavenderContainer),
                         contentAlignment = Alignment.Center
@@ -110,7 +110,7 @@ fun WearsicLibraryTrackRow(
                             imageVector = Icons.Rounded.MusicNote,
                             contentDescription = null,
                             tint = WearsicVibrantLavender,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
@@ -125,8 +125,8 @@ fun WearsicLibraryTrackRow(
                     Text(
                         text = track.title,
                         color = WearsicTextPrimary,
-                        fontSize = 12.sp,
-                        lineHeight = 15.sp,
+                        fontSize = 13.sp,
+                        lineHeight = 16.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
@@ -135,8 +135,8 @@ fun WearsicLibraryTrackRow(
                     Text(
                         text = track.artist,
                         color = WearsicTextSecondary,
-                        fontSize = 10.sp,
-                        lineHeight = 13.sp,
+                        fontSize = 11.sp,
+                        lineHeight = 14.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )

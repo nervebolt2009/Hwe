@@ -358,7 +358,7 @@ private fun SearchTrackItem(
             .background(WearsicGlassFill)
             .border(1.dp, WearsicGlassBorder, CircleShape)
             .combinedClickable(onClick = onClick, onLongClick = onLongPress)
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
             .testTag("search_track_${track.id}")
     ) {
         Row(
@@ -380,13 +380,13 @@ private fun SearchTrackItem(
                         contentDescription = track.title,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(34.dp)
                             .clip(CircleShape)
                     )
                 } else {
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(34.dp)
                             .clip(CircleShape)
                             .background(WearsicLavenderContainer),
                         contentAlignment = Alignment.Center
@@ -395,26 +395,32 @@ private fun SearchTrackItem(
                             imageVector = Icons.Rounded.MusicNote,
                             contentDescription = null,
                             tint = WearsicVibrantLavender,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
 
                 Spacer(modifier = Modifier.width(10.dp))
 
-                Column {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp)
+                ) {
                     Text(
                         text = track.title,
                         color = WearsicTextPrimary,
-                        fontSize = 12.sp,
+                        fontSize = 13.sp,
+                        lineHeight = 16.sp,
                         fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = track.artist,
                         color = WearsicTextSecondary,
-                        fontSize = 10.sp,
+                        fontSize = 11.sp,
+                        lineHeight = 14.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
