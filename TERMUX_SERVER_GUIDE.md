@@ -1,95 +1,117 @@
-# Wearsic Server — Complete Termux Setup Guide
+# Wearsic Server — Termux Setup Guide
 
-Every command you need, in order, to run the Wearsic music server on a spare
-Android phone using Termux — and connect your Wear OS watch to it.
-
----
-
-## 0. What this is
-
-```
-[ Watch: Wearsic APK ]  ──WiFi/Internet──▶  [ Phone (Termux): wearsic-server ]  ──▶  YouTube Music
-        search / stream / playlists                extracts & streams audio
-```
-
-The watch app is just a lightweight player. All the heavy work (searching
-YouTube, extracting audio streams, artwork) is done by `wearsic-server` on an
-old Android phone running [Termux](https://termux.dev).
-
-The server **self-heals**: if it crashes it restarts automatically, if it hangs
-it is detected via `/health` checks every 30 s and killed + restarted, and
-`termux-wake-lock` stops Android from freezing it in the background.
-
----
+Run the Wearsic backend on an Android phone with Termux and connect a Wear OS
+watch over the same Wi-Fi network, Tailscale, or a private HTTPS tunnel.
 
 ## 1. Install Termux
 
-- Install **Termux from F-Droid** (the Play Store version is outdated/broken):
-  https://f-droid.org/en/packages/com.termux/
-- Open Termux, then update packages:
+Install Termux from F-Droid, not the outdated Play Store build:
+
+<https://f-droid.org/en/packages/com.termux/>
+
+Then update packages:
 
 ```bash
 pkg update -y && pkg upgrade -y
+pkg install -y openjdk-17 curl unzip
+java -version
 ```
 
-## 2. Get the server onto the phone
+Java 17 or newer is required.
 
-### Option A — download directly on the phone
+## 2. Install the server package
 
-```bash
-pkg install -y curl
-curl -L -o ~/wearsic-server-termux-FIXED.zip \
-  "https://github.com/roopanganesan40-glitch/Wearos-music/releases/latest/download/wearsic-server-termux-FIXED.zip"
-```
-
-### Option B — copy from somewhere else
-
-Download the zip on a PC/another phone, then move it to the Termux phone
-(Share → "Save to storage", or USB). Note where it lands (usually
-`/storage/emulated/0/Download/`). Then enable access:
+Download `wearsic-server-termux-FIXED.zip` from the GitHub release, then either
+copy it to Termux's home directory or copy it from Android shared storage:
 
 ```bash
-pkg install -y unzip
-termux-setup-storage          # tap ALLOW on the permission popup
+termux-setup-storage
 cp ~/storage/downloads/wearsic-server-termux-FIXED.zip ~/
 ```
 
-### Extract and enter the folder
+Extract it:
 
 ```bash
-cd ~ && unzip -o wearsic-server-termux-FIXED.zip
+cd ~
+unzip -o wearsic-server-termux-FIXED.zip
 cd ~/wearsic-server
+chmod +x run-termux.sh bin/wearsic-server
 ```
 
-> If you downloaded from GitHub with Option A, also run:
-> `pkg install -y unzip && cd ~ && unzip -o wearsic-server-termux-FIXED.zip && cd wearsic-server`
+The extracted directory must contain:
 
----
+```text
+~/wearsic-server/run-termux.sh
+~/wearsic-server/bin/wearsic-server
+~/wearsic-server/lib/
+```
 
-## 3. First start
+## 3. Configure the server
+
+The defaults are:
+
+- Port: `8080`
+- Database: `~/wearsic-server/wearsic.db`
+- API key: disabled
+
+For a private server, create or edit `.env` without duplicating entries:
 
 ```bash
-chmod +x run-termux.sh        # zip tools sometimes drop execute permissions
+cd ~/wearsic-server
+touch .env
+sed -i '/^WEARSIC_API_KEY=/d' .env
+printf '%s\n' 'WEARSIC_API_KEY=replace-with-a-long-random-secret' >> .env
+chmod 600 .env
+```
+
+Optional settings:
+
+```bash
+printf '%s\n' 'PORT=8080' >> .env
+printf '%s\n' 'WEARSIC_DB_PATH=/data/data/com.termux/files/home/wearsic-server/wearsic.db' >> .env
+```
+
+Do not share `.env`; it contains the API key.
+
+## 4. Start the auto-healing server
+
+Run this in a Termux session and leave the session alive:
+
+```bash
+cd ~/wearsic-server
 ./run-termux.sh
 ```
 
-You should see:
+The supervisor now:
 
-```
+- acquires a Termux wake lock when available;
+- starts the server;
+- checks `http://127.0.0.1:8080/health` every 30 seconds;
+- retries failed health checks three times;
+- restarts the server after a crash or approximately 45 seconds of failure;
+- applies a bounded restart backoff;
+- rotates `wearsic-server.log` at approximately 2 MB;
+- writes its PID to `wearsic-server.pid`;
+- shuts down the child server cleanly on `Ctrl+C`.
+
+Expected output includes:
+
+```text
 [wearsic HH:MM:SS] wake lock acquired
 [wearsic HH:MM:SS] auto-heal supervisor starting (health checks every 30s)
-[wearsic HH:MM:SS] server started (pid XXXX, port 8080)
+[wearsic HH:MM:SS] starting server on port 8080
+[wearsic HH:MM:SS] server started (pid XXXX)
 ```
 
-**Leave that Termux session running.** The screen can lock; just don't swipe
-Termux away from recents.
+The supervisor is intentionally foreground-based. Do not run multiple copies.
+If one is already running, the script refuses to start a second supervisor.
 
-### Verify it works
+## 5. Verify locally
 
-Open a **second** Termux session (swipe from left edge → New session) and run:
+Open a second Termux session:
 
 ```bash
-curl http://127.0.0.1:8080/health
+curl --fail --max-time 10 http://127.0.0.1:8080/health
 ```
 
 Expected response:
@@ -98,146 +120,173 @@ Expected response:
 {"status":"ok","version":"1.0.0","serverName":"Wearsic Engine"}
 ```
 
-Try a real search too:
+Test search:
 
 ```bash
-curl "http://127.0.0.1:8080/api/search?q=crowded+house"
+curl --fail --max-time 30 'http://127.0.0.1:8080/api/search?q=crowded%20house'
 ```
 
-You should get JSON with a `"results"` array.
-
----
-
-## 4. Make it private (API key) 🔐
-
-Without a key, anyone who can reach the server URL can use it. One shared
-secret protects everything.
-
-### Step 1 — pick a secret key
-
-Invent one, e.g. `my-secret-wearsic-2026`. Longer = better. Avoid spaces.
-
-### Step 2 — save it in the server config
+If an API key is configured, include it:
 
 ```bash
-echo "WEARSIC_API_KEY=my-secret-wearsic-2026" >> ~/wearsic-server/.env
+curl --fail --max-time 30 \
+  -H 'X-Wearsic-Key: replace-with-a-long-random-secret' \
+  'http://127.0.0.1:8080/api/search?q=crowded%20house'
 ```
 
-### Step 3 — restart the server
+## 6. Connect the watch
 
-Stop the supervisor with `Ctrl+C` in its session (or `pkill -f wearsic-server`),
-then start again:
+### Same Wi-Fi
+
+Find the phone's Wi-Fi address:
 
 ```bash
+ip -4 addr show wlan0
+```
+
+Use the `inet` address, for example `192.168.1.42`, then set this in Wearsic:
+
+```text
+http://192.168.1.42:8080
+```
+
+Both devices must be on the same network, and the network must allow device-to-
+device traffic.
+
+### Tailscale
+
+Install Tailscale on both devices, then find the phone's Tailscale address:
+
+```bash
+ip -4 addr show tun0
+```
+
+Set the watch server URL to:
+
+```text
+http://100.x.y.z:8080
+```
+
+Use an API key even on Tailscale.
+
+### Public HTTPS tunnel
+
+Use a private HTTPS tunnel pointing to `http://127.0.0.1:8080`. Set the watch
+URL to the HTTPS hostname and always configure `WEARSIC_API_KEY`.
+
+Do not expose an open Wearsic server to the public internet.
+
+## 7. Useful commands
+
+```bash
+# Start / auto-heal
 cd ~/wearsic-server && ./run-termux.sh
+
+# Health check
+curl --fail http://127.0.0.1:8080/health
+
+# Follow logs
+tail -f ~/wearsic-server/wearsic-server.log
+
+# Check supervisor PID
+cat ~/wearsic-server/wearsic-server.pid
+
+# Stop cleanly
+# Press Ctrl+C in the supervisor's Termux session
 ```
 
-### Step 4 — verify it is locked
+If the supervisor session was lost and you need to stop it, use the recorded
+PID rather than a broad process-name kill:
 
 ```bash
-# without key -> rejected (HTTP error):
-curl "http://127.0.0.1:8080/api/search?q=test"
-
-# with key -> works:
-curl -H "X-Wearsic-Key: my-secret-wearsic-2026" "http://127.0.0.1:8080/api/search?q=test"
+kill "$(cat ~/wearsic-server/wearsic-server.pid)"
 ```
 
-### Step 5 — tell the watch the key
+## 8. Data and backup
 
-On the watch: **Wearsic → Settings → API Key** → type/paste the *same* key.
-The app now sends it (`X-Wearsic-Key` header) automatically with every request.
+Important files:
 
----
+- `wearsic.db` — favorites and playlists;
+- `.env` — API key and server settings;
+- `wearsic-server.log` — supervisor and server logs.
 
-## 5. Connect the watch (choose ONE)
-
-### A. Same WiFi network (simplest)
-
-1. Find the server phone's IP: in Termux run
-   ```bash
-   ifconfig wlan0 | grep inet
-   ```
-   (e.g. `192.168.1.42`)
-2. On the watch: **Settings → Server URL** → `http://192.168.1.42:8080`
-3. Works only when both devices are on the same WiFi.
-
-### B. Tailscale private network (works everywhere)
-
-1. Install Tailscale on the **server phone** (Play Store) and log in
-2. Install Tailscale on the **watch** (Play Store has a Wear OS version)
-3. Find the phone's tailnet IP:
-   ```bash
-   ifconfig tun0 | grep inet     # usually 100.x.y.z
-   ```
-   or check https://login.tailscale.com/admin/machines
-4. Watch → **Settings → Server URL** → `http://100.x.y.z:8080`
-- Private, encrypted, works over any network. API key optional but recommended.
-
-### C. Public HTTPS via Cloudflare Tunnel / Tailscale Funnel
-
-Funnel is **not supported by the Android Tailscale app**, so use either:
-- **Cloudflare Tunnel** (`cloudflared`) pointed at `http://localhost:8080`, or
-- **Tailscale Funnel from a PC/Linux box**: run the server (or an ssh/socat
-  relay to the phone) there, then `tailscale funnel --bg 8080`.
-
-Then watch → **Settings → Server URL** → `https://your-name.example.ts.net`.
-⚠️ A public URL **must** have an API key set (Section 4).
-
----
-
-## 6. Daily-use commands cheat sheet
-
-| Action | Command |
-|---|---|
-| Start server | `cd ~/wearsic-server && ./run-termux.sh` |
-| Stop server | `Ctrl+C` in the server session |
-| Force kill | `pkill -f wearsic-server` |
-| Health check | `curl http://127.0.0.1:8080/health` |
-| Live logs | `tail -f ~/wearsic-server/wearsic-server.log` |
-| Your WiFi IP | `ifconfig wlan0 \| grep inet` |
-| Free disk space | `df -h ~` |
-
-Where your data lives:
-- `~/wearsic-server/wearsic.db` — favorites & playlists (**back this up!**)
-- `~/wearsic-server/.env` — API key & settings
-- `~/wearsic-server/wearsic-server.log` — logs (auto-rotated at ~2 MB)
-
----
-
-## 7. Troubleshooting
-
-| Symptom | Fix |
-|---|---|
-| `Missing wearsic-server binary` | You're not inside `~/wearsic-server`; re-extract the zip fully (`bin/` and `lib/` must sit next to `run-termux.sh`) |
-| `Permission denied` on start | `chmod +x run-termux.sh bin/wearsic-server` |
-| Search returns nothing / errors | YouTube changed internals → update extractor: `cd ~/wearsic-server && ./update-newpipe.sh` (the supervisor also auto-runs it after repeated failures) |
-| `Sign in to confirm you're not a bot` errors | Set a YouTube cookie: see `wearsic-server/README.md` → `WEARSIC_YOUTUBE_COOKIE` env var, or POST it to `/api/config/youtube-cookie` |
-| Server dies when phone sleeps | Run `termux-wake-lock` manually; disable battery optimization for Termux (Android Settings → Apps → Termux → Battery → Unrestricted) |
-| Watch shows "Host not found" | Wrong IP, different WiFi networks, or server not running — redo Section 5-A step 1 |
-| Watch shows HTTP 401/403 | API key missing/different between `.env` and watch Settings — retype both |
-| Port already in use | Another copy is running: `pkill -f wearsic-server` then start again |
-
----
-
-## 8. Keeping it alive long-term (optional)
-
-Install **Termux:Boot** (F-Droid) to auto-start the server after reboot:
+Back up the database and keep `.env` private:
 
 ```bash
-pkg install -y termux-services
+cp ~/wearsic-server/wearsic.db ~/wearsic-server/wearsic.db.backup
+cp ~/wearsic-server/.env ~/wearsic-server/.env.backup
+chmod 600 ~/wearsic-server/.env.backup
+```
+
+## 9. Keep Termux alive
+
+For long-running use:
+
+1. Run `termux-wake-lock` if the supervisor did not acquire it automatically.
+2. Set Termux battery usage to **Unrestricted** in Android settings.
+3. Do not swipe the supervisor Termux session away.
+4. For reboot-start support, install Termux:Boot from F-Droid and create:
+
+```bash
 mkdir -p ~/.termux/boot
 cat > ~/.termux/boot/start-wearsic.sh <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 termux-wake-lock
-exec ~/wearsic-server/run-termux.sh
+exec "$HOME/wearsic-server/run-termux.sh"
 EOF
 chmod +x ~/.termux/boot/start-wearsic.sh
 ```
 
-Reboot the phone once to confirm it comes up by itself.
+## 10. Troubleshooting
 
----
+### Missing binary
 
-*Server internals & patch history: [`server-patches/PATCHES.md`](server-patches/PATCHES.md).
-Full endpoint reference: [`wearsic-server/README.md`](wearsic-server/README.md)
-and [`API_CONTRACT.md`](API_CONTRACT.md).*
+```bash
+cd ~/wearsic-server
+ls -l bin/wearsic-server lib/
+chmod +x bin/wearsic-server run-termux.sh
+```
+
+If `bin/` or `lib/` is missing, extract the complete release ZIP again.
+
+### Port already in use
+
+Check the process using the port:
+
+```bash
+curl http://127.0.0.1:8080/health
+cat ~/wearsic-server/wearsic-server.pid 2>/dev/null || true
+```
+
+Stop the existing supervisor using its PID, then start one copy only.
+
+### HTTP 401 or 403
+
+Confirm the same key is present in `.env` and Wearsic Settings. The header is:
+
+```text
+X-Wearsic-Key
+```
+
+### Search or stream extraction fails
+
+Inspect the log:
+
+```bash
+tail -100 ~/wearsic-server/wearsic-server.log
+```
+
+YouTube may require a cookie. The server README documents the optional
+`WEARSIC_YOUTUBE_COOKIE` environment variable and cookie configuration route.
+
+### Server restarts repeatedly
+
+Check Java, storage, and logs:
+
+```bash
+java -version
+df -h ~
+tail -200 ~/wearsic-server/wearsic-server.log
+```
+
+The server needs free storage for SQLite and stream handling.

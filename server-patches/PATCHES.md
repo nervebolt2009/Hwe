@@ -14,6 +14,12 @@ rebuild or extractor update.
 | 3 | `ExtractorService$streamTarget$2` | CONSTANT_Long entry `900000` → `21600000` | Stream URL cache TTL 15 min → 6 h = instant replays |
 | 4 | `Database` (method `deletePlaylistTrack`) | Full method body replaced (ASM, COMPUTE_FRAMES): `tid == "*"` now deletes the whole playlist row (FK cascades tracks) | Playlist deletion from the watch — the jar had no delete route/method |
 
+## Current application status
+
+The release ZIP must be rebuilt whenever `run-termux.sh`, documentation, or
+package helper scripts change. The unpacked server directory and the ZIP should
+be treated as separate deployment artifacts and verified independently.
+
 ## Current application status (verified 2026-08-26)
 
 - **wearsic-server-termux-FIXED.zip** — patches 1–4 applied (canonical distributable).
@@ -39,14 +45,18 @@ Database.class if you rebuild.
 
 ## Non-jar components shipped in wearsic-server-termux-FIXED.zip
 
-- `run-termux.sh` — auto-heal supervisor: restarts server on crash, /health
-  poll every 30 s with force-restart after ~90 s unhealthy, termux-wake-lock,
-  log rotation (wearsic-server.log), full JIT + 256 MB heap.
-- `update-newpipe.sh` — when YouTube breaks extraction: fetches latest
-  NewPipeExtractor from GitHub releases via JitPack, patches launcher
-  CLASSPATH (jar names are hardcoded there!), SMOKE-TESTS a throwaway server
-  instance against live search, commits only if search works.
-- Launcher self-heals execute permissions lost by zip tools.
+- `run-termux.sh` — foreground auto-heal supervisor. It starts the server,
+  polls `/health` every 30 seconds, retries failed checks three times,
+  restarts crashed or unhealthy processes with bounded backoff, rotates
+  `wearsic-server.log` near 2 MB, writes `wearsic-server.pid`, acquires a
+  Termux wake lock when available, and shuts down the child on Ctrl+C.
+- `verify-package.sh` — non-destructive package check for required files,
+  executable permissions, Java 17+, the server JAR, and launcher dependencies.
+- `.env.example` — environment variable template included in the package.
+
+`update-newpipe.sh` is not shipped in this repository and is not part of the
+supported update path. A newer extractor requires rebuilding and repackaging
+the server JAR deliberately.
 
 ## Verified live endpoints (server v1.0.0 jar lineage)
 

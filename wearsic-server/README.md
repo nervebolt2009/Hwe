@@ -5,34 +5,33 @@ Standalone Ktor + NewPipe Extractor backend for the Wearsic Wear OS app. This pr
 ## Requirements
 
 - Java 17
-- Termux packages: `pkg install openjdk-17 git`
+- Termux packages: `pkg install -y openjdk-17 curl unzip`
 - A Cloudflare Tunnel pointed at the server port
 
 ## Build and run
 
-### From the Git repository
+### From the ready-made Termux ZIP (`wearsic-server-termux-FIXED.zip`)
 
-```bash
-./gradlew -p server build
-./gradlew -p server installDist
-cd server
-PORT=8080 WEARSIC_DB_PATH="$PWD/wearsic.db" ./run-termux.sh
-```
-
-### From the ready-made Termux ZIP (`wearsic-server-termux.zip`)
-
-1. Install Termux packages: `pkg install openjdk-17 unzip`
-2. Allow storage access once: `termux-setup-storage` (then restart Termux if asked)
-3. Copy the ZIP from Downloads and extract it:
+1. Install Termux packages:
    ```bash
-   cp ~/storage/downloads/wearsic-server-termux.zip ~/
-   cd ~
-   unzip wearsic-server-termux.zip
+   pkg update -y && pkg upgrade -y
+   pkg install -y openjdk-17 curl unzip
+   java -version
    ```
-4. Start the server:
+2. Allow storage access once:
+   ```bash
+   termux-setup-storage
+   ```
+3. Copy the fixed ZIP from Downloads and extract it:
+   ```bash
+   cp ~/storage/downloads/wearsic-server-termux-FIXED.zip ~/
+   cd ~
+   unzip -o wearsic-server-termux-FIXED.zip
+   ```
+4. Start the auto-healing supervisor:
    ```bash
    cd ~/wearsic-server
-   chmod +x run-termux.sh
+   chmod +x run-termux.sh bin/wearsic-server
    ./run-termux.sh
    ```
 
@@ -58,7 +57,7 @@ Authenticated when `WEARSIC_API_KEY` is set:
 - `GET /api/search?q=` — maximum 10 results
 - `GET /api/suggestions?q=` — maximum 5 suggestions
 - `GET /api/related/{videoId}` — maximum 10 results
-- `GET /api/stream/{videoId}` — proxied audio with Range forwarding; prefers M4A/AAC near 128 kbps
+- `GET /api/stream/{videoId}` — proxied audio with Range forwarding; the FIXED release prefers WebM/Opus near 70 kbps
 - `GET|POST|DELETE /api/favorites[/{videoId}]`
 - `GET|POST /api/playlists`
 - `GET /api/playlists/{id}`
@@ -83,4 +82,10 @@ Keep the tunnel URL out of source code. In the watch app Settings screen, enter 
 https://your-tunnel.trycloudflare.com
 ```
 
-If you set `WEARSIC_API_KEY`, the Android client must also be extended to send `X-Wearsic-Key` on all `/api` calls.
+The Android client sends `X-Wearsic-Key` centrally on API, stream, cache, and download requests when an API key is configured.
+
+The packaged `run-termux.sh` is a foreground auto-healing supervisor: it checks
+`/health` every 30 seconds, retries failures, restarts crashed or unhealthy
+servers, rotates logs near 2 MB, uses a PID file, and shuts down the child
+cleanly on `Ctrl+C`. See `TERMUX_SERVER_GUIDE.md` for setup and Termux:Boot
+instructions.
