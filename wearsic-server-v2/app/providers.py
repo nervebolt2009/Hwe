@@ -18,6 +18,31 @@ class ProviderError(RuntimeError):
     pass
 
 
+def normalize_track(item: dict[str, Any]) -> Track:
+    """Build a Track accepting BOTH response dialects.
+
+    V1 (NewPipe server): videoId / uploader / thumbnailUrl, no streamUrl.
+    V2 native:           id / artist / artworkUrl / streamUrl.
+    The app requires the V2 names; the stream URL is synthesized when the
+    upstream does not provide one (the gateway's /api/stream route serves it).
+    """
+    track_id = str(item.get("id") or item.get("videoId") or "").strip()
+    artist = str(item.get("artist") or item.get("uploader") or "Unknown Artist")
+    artwork = item.get("artworkUrl") or item.get("thumbnailUrl")
+    stream = str(item.get("streamUrl") or "").strip()
+    if not stream and track_id:
+        stream = f"/api/stream/{quote(track_id, safe='')}"
+    return Track(
+        id=track_id,
+        title=str(item.get("title") or track_id),
+        artist=artist,
+        album=item.get("album"),
+        artworkUrl=artwork,
+        durationMs=int(item.get("durationMs") or 0),
+        streamUrl=stream,
+    )
+
+
 class MusicProvider(ABC):
     name: str
 
@@ -58,7 +83,7 @@ class PrimaryHttpProvider(MusicProvider):
 
     async def search(self, query: str) -> SearchResponse:
         data = await self._get("/api/search", q=query)
-        return SearchResponse(results=[Track.model_validate(item) for item in data.get("results", [])])
+        return SearchResponse(results=[normalize_track(item) for item in data.get("results", [])])
 
     async def suggestions(self, query: str) -> SuggestionsResponse:
         data = await self._get("/api/suggestions", q=query)
@@ -66,7 +91,8 @@ class PrimaryHttpProvider(MusicProvider):
 
     async def related(self, video_id: str) -> RelatedResponse:
         data = await self._get(f"/api/related/{quote(video_id, safe='')}")
-        return RelatedResponse.model_validate(data)
+        items = data.get("results", []) if isinstance(data, dict) else []
+        return RelatedResponse(results=[normalize_track(item) for item in items])
 
     async def albums(self, query: str) -> list[Album]:
         data = await self._get("/api/search/albums", q=query)
@@ -74,7 +100,7 @@ class PrimaryHttpProvider(MusicProvider):
 
     async def playlist_by_url(self, url: str) -> list[Track]:
         data = await self._get("/api/playlist", url=url)
-        return [Track.model_validate(item) for item in data.get("tracks", [])]
+        return [normalize_track(item) for item in data.get("tracks", [])]
 
     async def resolve_stream(self, video_id: str) -> tuple[str, str]:
         # The primary server's stream route is already compatible with the app.
@@ -175,4 +201,4 @@ class YtDlpProvider(MusicProvider):
             url = stdout.decode(errors="replace").strip().splitlines()[0] if stdout else ""
         if not url:
             raise ProviderError("yt-dlp did not return a stream URL")
-        return str(url), "audio/webm"
+        return url, "audio/webm"

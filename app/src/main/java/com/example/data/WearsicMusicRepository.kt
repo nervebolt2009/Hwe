@@ -31,7 +31,11 @@ class WearsicMusicRepository(
     }
 
     suspend fun getServerUrl(): String {
-        return preferencesRepository.serverUrlFlow.first()
+        val url = preferencesRepository.serverUrlFlow.first()
+        // Keep the shared HTTP helper in sync so server-relative media paths
+        // (`/api/stream/{id}`) resolve against the configured server.
+        com.example.network.WearsicHttp.serverUrl = url
+        return url
     }
 
     suspend fun saveServerUrl(url: String) {
