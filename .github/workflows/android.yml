@@ -139,10 +139,16 @@ jobs:
             wearsic-server-v2/run-termux.sh \
             wearsic-server-v2/Makefile
 
-      - name: Stage release assets
+      - name: Stage and verify release assets
         run: |
           cp app/build/outputs/apk/release/app-release.apk "dist/Wearsic-${GITHUB_REF_NAME}.apk"
           cp wearsic-server-termux-FIXED.zip "dist/wearsic-server-termux-FIXED.zip"
+          test -s "dist/wearsic-server-v2.zip"
+          test -s "dist/wearsic-server-termux-FIXED.zip"
+          test -s "dist/Wearsic-${GITHUB_REF_NAME}.apk"
+          unzip -Z1 "dist/wearsic-server-v2.zip" | grep -q '^wearsic-server-v2/app/main.py$'
+          echo "Release assets:"
+          ls -lh dist/
 
       - name: Create GitHub Release
         env:
@@ -152,4 +158,5 @@ jobs:
             --title "Wearsic $GITHUB_REF_NAME" \
             --generate-notes \
             "dist/Wearsic-${GITHUB_REF_NAME}.apk" \
-            "dist/wearsic-server-termux-FIXED.zip"
+            "dist/wearsic-server-termux-FIXED.zip" \
+            "dist/wearsic-server-v2.zip"
