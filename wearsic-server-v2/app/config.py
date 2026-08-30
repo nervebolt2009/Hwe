@@ -23,6 +23,7 @@ class Settings:
     cache_ttl_seconds: int
     failure_threshold: int
     recovery_threshold: int
+    probe_interval_seconds: int
     max_concurrent_extractions: int
 
     @classmethod
@@ -37,5 +38,6 @@ class Settings:
             cache_ttl_seconds=_int("WEARSIC_CACHE_TTL_SECONDS", 21600),
             failure_threshold=_int("WEARSIC_FAILURE_THRESHOLD", 3),
             recovery_threshold=_int("WEARSIC_RECOVERY_THRESHOLD", 3),
+            probe_interval_seconds=_int("WEARSIC_PROBE_INTERVAL_SECONDS", 30),
             max_concurrent_extractions=_int("WEARSIC_MAX_CONCURRENT_EXTRACTIONS", 2),
         )

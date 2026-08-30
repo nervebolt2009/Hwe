@@ -12,6 +12,14 @@ class Track(BaseModel):
     durationMs: int = 0
     streamUrl: str = ""
 
+    @property
+    def videoId(self) -> str:
+        return self.id
+
+    @property
+    def uploader(self) -> str:
+        return self.artist
+
 
 class SearchResponse(BaseModel):
     results: list[Track] = Field(default_factory=list)

@@ -50,6 +50,7 @@ def settings() -> Settings:
         cache_ttl_seconds=1,
         failure_threshold=2,
         recovery_threshold=2,
+        probe_interval_seconds=1,
         max_concurrent_extractions=1,
     )
 

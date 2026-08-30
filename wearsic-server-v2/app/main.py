@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import secrets
-from urllib.parse import quote
+from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
@@ -24,7 +25,32 @@ from .router import ProviderRouter
 settings = Settings.from_env()
 database = Database(settings.db_path)
 router = ProviderRouter(settings, PrimaryHttpProvider(settings), YtDlpProvider(settings))
-app = FastAPI(title="Wearsic Server V2", version="2.0.0")
+
+
+async def _primary_recovery_loop() -> None:
+    while True:
+        await asyncio.sleep(settings.probe_interval_seconds)
+        if not router.healing:
+            continue
+        try:
+            await router.probe_primary()
+        except Exception:
+            # A failed probe must never terminate the recovery worker or app.
+            continue
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    recovery_task = asyncio.create_task(_primary_recovery_loop())
+    try:
+        yield
+    finally:
+        recovery_task.cancel()
+        await asyncio.gather(recovery_task, return_exceptions=True)
+        database.close()
+
+
+app = FastAPI(title="Wearsic Server V2", version="2.0.0", lifespan=lifespan)
 
 
 def require_api_key(x_wearsic_key: str | None = Header(default=None)) -> None:
@@ -46,7 +72,7 @@ async def health() -> HealthResponse:
 
 
 @app.get("/api/search", response_model=SearchResponse, dependencies=[Depends(require_api_key)])
-async def search(q: str = Query(min_length=1, max_length=200)) -> SearchResponse:
+async def search(q: str = Query(default="", min_length=1, max_length=200)) -> SearchResponse:
     try:
         return await router.search(q)
     except ProviderError as exc:
@@ -156,6 +182,7 @@ async def stream(video_id: str, request: Request):
     for name in ("content-length", "content-range", "accept-ranges"):
         if name in upstream.headers:
             response_headers[name] = upstream.headers[name]
+
     async def close_upstream() -> None:
         await upstream.aclose()
         await client.aclose()
