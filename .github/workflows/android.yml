@@ -118,9 +118,29 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew :app:assembleRelease --stacktrace
 
+      - name: Set up Python for V2 package validation
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate and package V2 server
+        run: |
+          python -m compileall -q wearsic-server-v2/app wearsic-server-v2/tests
+          bash -n wearsic-server-v2/run-termux.sh
+          rm -rf dist wearsic-server-v2/dist
+          mkdir -p dist
+          zip -qr "dist/wearsic-server-v2.zip" \
+            wearsic-server-v2/app \
+            wearsic-server-v2/tests \
+            wearsic-server-v2/requirements.txt \
+            wearsic-server-v2/.env.example \
+            wearsic-server-v2/.gitignore \
+            wearsic-server-v2/README.md \
+            wearsic-server-v2/run-termux.sh \
+            wearsic-server-v2/Makefile
+
       - name: Stage release assets
         run: |
-          mkdir -p dist
           cp app/build/outputs/apk/release/app-release.apk "dist/Wearsic-${GITHUB_REF_NAME}.apk"
           cp wearsic-server-termux-FIXED.zip "dist/wearsic-server-termux-FIXED.zip"
 
